@@ -1,0 +1,109 @@
+---
+title: "Setting up and reading files"
+author: "Shreya Vinodh"
+date: "2026-11-08"
+output: html_document
+---
+
+#Libraries needed to run codes in this project
+```{r}
+library(tidyverse)
+library(readxl)
+library(RColorBrewer)
+#install.packages("scico")
+library(scico)
+library(colorspace)
+#install.packages("MetBrewer")
+library(MetBrewer)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(tidyr)
+library(forcats)
+#install.packages("hrbrthemes")
+library(hrbrthemes)
+#install.packages("viridis")
+library(viridis)
+#install.packages("PerformanceAnalytics")
+library(PerformanceAnalytics)
+#install.packages("metR")
+library(metR)
+#install.packages("rioja")
+library(rioja)
+#install.packages("oce")
+library(oce)
+#install.packages("pracma")
+library(pracma)
+library(tibble)
+
+#GAMs
+library(mgcv)
+library(fields)
+library(maps)
+library(mapdata)
+library(akima)
+#install.packages("mirai")
+#install.packages("gratia")
+#library(gratia)
+
+#install.packages(c("sf", "ggspatial", "rosm", "prettymapr"))
+library(sf)
+library(ggspatial)
+library(tidyverse)
+#install.packages("ggnewscale")
+library(ggnewscale)
+
+library(rnaturalearth)
+library(sf)
+library(ggplot2)
+library(cowplot)
+library(patchwork)
+#install.packages("ncdf4")
+library(ncdf4)
+```
+
+#Reading and improving in data
+```{r}
+#Reading
+Ctd_Verticals_LJ=read.csv(paste0(base_dir,"CV_LeftJoin.csv"),,sep=",",header=T) #reading in df with copepod verticals information
+
+Ctd_Verticals_LJ$Month=Ctd_Verticals_LJ$Month.x
+Ctd_Verticals_LJ$Year=Ctd_Verticals_LJ$Year.x
+Ctd_Verticals_LJ$Temp=Ctd_Verticals_LJ$T090C
+Ctd_Verticals_LJ$Salinity=Ctd_Verticals_LJ$D.Salinity
+Ctd_Verticals_LJ$Light=Ctd_Verticals_LJ$Par
+
+nc <- nc_open("C:/Shreya/NARW Thesis/Data/ccb_bath.nc") #opening up the nc file
+print(nc)   #printing variables, dimensions, units, and attributes
+
+lon       <- ncvar_get(nc, "lon")         # reading in longitude data (length 197)
+lat       <- ncvar_get(nc, "lat")         # reading in latitude data (length 116) 
+elevation <- ncvar_get(nc, "elevation")   # reading in elevation data (197 x 116 matrix)
+
+nc_close(nc) #closing the nc file
+
+nc_df <- expand.grid(lon = lon, lat = lat) |> #create df of nc file information
+  mutate(
+    elevation = as.vector(elevation),   #negative values are below sea level
+    depth_m   = -elevation              # flip sign so there are positive readings of depth below surface
+  )
+
+df_ocean <- nc_df |>
+  filter(elevation < 0) |>   #filtering out positive elevation to only get sea depth information 
+  mutate(depth_m = -elevation)   #positive meters below sea level to have positive depth values 
+
+RW_Sightings=read.csv(paste0(base_dir,"RW_Sightings.csv"),sep = ",",header=T)
+
+
+#Improving
+#Making time an integer
+Lightsed=strptime(Ctd_Verticals_LJ$Time, format = "%H:%M:%S") #making time a workable object 
+Ctd_Verticals_LJ$time_of_day=Lightsed$hour*3600 + Lightsed$min*60 + Lightsed$sec #converting time to seconds of the day 
+
+Ctd_Verticals_LJ$Month=as.factor(Ctd_Verticals_LJ$Month) #Making month a factor
+
+Ctd_Verticals_LJ = Ctd_Verticals_LJ %>% #creating a column of max depth for each station
+  group_by(ID) %>%
+  mutate(max_depth = max(sample.depth..m., na.rm = TRUE)) %>%
+  ungroup()
+```
