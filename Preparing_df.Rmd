@@ -1,0 +1,180 @@
+---
+title: "Preparing df"
+author: "Shreya Vinodh"
+date: "2026-11-08"
+output: html_document
+---
+
+#Setting up my system
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+base_dir="C:/Shreya/NARW Thesis/Data/"
+```
+
+#CLEANING DATA
+```{r}
+sum(is.na(Ctd_Verticals_LJ$sample.depth..m.))
+sum(is.na(Ctd_Verticals_LJ$calanus.total.m3))
+
+#Ctd_Verticals_LJ$Month=Ctd_Verticals_LJ$Month.x
+#Ctd_Verticals_LJ$Year=Ctd_Verticals_LJ$Year.x
+#Ctd_Verticals_LJ$Temp=Ctd_Verticals_LJ$T090C
+#Ctd_Verticals_LJ$Salinity=Ctd_Verticals_LJ$D.Salinity
+#Ctd_Verticals_LJ$Light=Ctd_Verticals_LJ$Par
+
+df_vertical <- Ctd_Verticals_LJ |>
+  #Removing rows where depth or Calanus is NA
+  filter(!is.na(sample.depth..m.),
+         !is.na(calanus.total.m3),
+         !is.na(calanus.I.m3),
+         !is.na(calanus.II.m3),
+         !is.na(calanus.III.m3),
+         !is.na(calanus.IV.m3),
+         !is.na(calanus.V.m3),
+         !is.na(calanus.Adult.m3))|>
+  arrange(ID, Date, sample.depth..m.) |>    #Sort depth from surface to bottom within each station 
+  group_by(ID, Date, Year, Month) |>        #Work within each station visit
+  mutate(
+    cum_dens.total   = cumsum(calanus.total.m3),  #calculate the cumulative sum of calanus from surface to depth
+    cum_dens.I = cumsum(calanus.I.m3),
+    cum_dens.II = cumsum(calanus.II.m3),
+    cum_dens.III = cumsum(calanus.III.m3),
+    cum_dens.IV = cumsum(calanus.IV.m3),
+    cum_dens.V = cumsum(calanus.V.m3),
+    cum_dens.Adult = cumsum(calanus.Adult.m3),
+    total_dens.total = sum(calanus.total.m3), #calculate total calanus in the whole profile
+    total_dens.I = sum(calanus.I.m3),
+    total_dens.II = sum(calanus.II.m3),
+    total_dens.III = sum(calanus.III.m3),
+    total_dens.IV = sum(calanus.IV.m3),
+    total_dens.V = sum(calanus.V.m3),
+    total_dens.Adult = sum(calanus.Adult.m3),
+    prop_cum_total     = if_else(total_dens.total > 0, 
+                         cum_dens.total / total_dens.total, #proportion of calanus accumulated to this depth
+                         NA_real_),
+    
+    prop_cum_I     = if_else(total_dens.I > 0, 
+                         cum_dens.I / total_dens.I, #proportion of calanus accumulated to this depth
+                         NA_real_),
+    
+    prop_cum_II     = if_else(total_dens.II > 0, 
+                         cum_dens.II / total_dens.II, #proportion of calanus accumulated to this depth
+                         NA_real_),
+    
+    prop_cum_III     = if_else(total_dens.III > 0, 
+                         cum_dens.III / total_dens.III, #proportion of calanus accumulated to this depth
+                         NA_real_),
+    
+    prop_cum_IV     = if_else(total_dens.IV > 0, 
+                         cum_dens.IV / total_dens.IV, #proportion of calanus accumulated to this depth
+                         NA_real_),
+    
+    prop_cum_V     = if_else(total_dens.V > 0, 
+                         cum_dens.V / total_dens.V, #proportion of calanus accumulated to this depth
+                         NA_real_),
+    
+    prop_cum_Adult     = if_else(total_dens.Adult > 0, 
+                         cum_dens.Adult / total_dens.Adult, #proportion of calanus accumulated to this depth
+                         NA_real_),
+    
+    max_depth = max(sample.depth..m.),
+    perc_depth      = sample.depth..m. / max_depth #fractional depth (how far through the water column we are)
+  ) |>
+  ungroup() |>
+ mutate(
+  prop_cum_total  = case_when(prop_cum_total  <= 0 ~ 0.001, prop_cum_total  >= 1 ~ 0.999, TRUE ~ prop_cum_total),
+  prop_cum_I      = case_when(prop_cum_I      <= 0 ~ 0.001, prop_cum_I      >= 1 ~ 0.999, TRUE ~ prop_cum_I),
+  prop_cum_II     = case_when(prop_cum_II     <= 0 ~ 0.001, prop_cum_II     >= 1 ~ 0.999, TRUE ~ prop_cum_II),
+  prop_cum_III    = case_when(prop_cum_III    <= 0 ~ 0.001, prop_cum_III    >= 1 ~ 0.999, TRUE ~ prop_cum_III),
+  prop_cum_IV     = case_when(prop_cum_IV     <= 0 ~ 0.001, prop_cum_IV     >= 1 ~ 0.999, TRUE ~ prop_cum_IV),
+  prop_cum_V      = case_when(prop_cum_V      <= 0 ~ 0.001, prop_cum_V      >= 1 ~ 0.999, TRUE ~ prop_cum_V),
+  prop_cum_Adult  = case_when(prop_cum_Adult  <= 0 ~ 0.001, prop_cum_Adult  >= 1 ~ 0.999, TRUE ~ prop_cum_Adult)
+)|>
+  filter(!is.na(prop_cum_total),
+         !is.na(prop_cum_I),
+         !is.na(prop_cum_II),
+         !is.na(prop_cum_III),
+         !is.na(prop_cum_IV),
+         !is.na(prop_cum_V),
+         !is.na(prop_cum_Adult)) #filtering NA's from prop_cum
+
+###############################################################################################
+
+Ctd_Verticals_LJ <- Ctd_Verticals_LJ |> #piping Ctd_Verticals_LJ
+  group_by(ID, Date) |> #grouping by ID and Date
+  mutate(
+    lat  = if (any(sample.depth..m. == 0, na.rm = TRUE)) {
+      latitude[which(sample.depth..m. == 0)[1]]
+    } else {
+      latitude[which.min(sample.depth..m.)]
+    },  #mutating the latitude assigned at 0m depth (or shallowest depth) to be the latitude for that whole station
+    long = if (any(sample.depth..m. == 0, na.rm = TRUE)) {
+      longitude[which(sample.depth..m. == 0)[1]]
+    } else {
+      longitude[which.min(sample.depth..m.)]
+    }  #mutating the longitude assigned at 0m depth (or shallowest depth) to be the longitude for that whole station
+  ) |>
+  ungroup() #ungrouping after grouping
+
+###############################################################################################
+
+Integrated_new <- Ctd_Verticals_LJ |>
+  #Removing rows where depth, temperature and calanus is NA for integration
+  filter(!is.na(sample.depth..m.),
+         !is.na(Temp),
+        !is.na(calanus.total.m3),
+         !is.na(calanus.I.m3),
+         !is.na(calanus.II.m3),
+         !is.na(calanus.III.m3),
+         !is.na(calanus.IV.m3),
+         !is.na(calanus.V.m3),
+         !is.na(calanus.Adult.m3))|> 
+  arrange(ID, Date, sample.depth..m.) |> #Sorting depth from surface to bottom within each station visit
+  group_by(ID, Date, Year, Month, sample.depth..m., lat, long) |> #Averaging duplicate depths
+  summarise(
+    calanus.total.m3 = mean(calanus.total.m3, na.rm = TRUE), #averaging calanus at duplicate depths 
+    calanus.I.m3 = mean(calanus.I.m3, na.rm = TRUE),
+    calanus.II.m3 = mean(calanus.II.m3, na.rm = TRUE),
+    calanus.III.m3 = mean(calanus.III.m3, na.rm = TRUE),
+    calanus.IV.m3 = mean(calanus.IV.m3, na.rm = TRUE),
+    calanus.V.m3 = mean(calanus.V.m3, na.rm = TRUE),
+    calanus.Adult.m3 = mean(calanus.Adult.m3, na.rm = TRUE),
+    total.zpl.m3     = mean(total.zpl.m3,     na.rm = TRUE), #averaging total copepods at duplicate depths
+    Temp            = mean(Temp,             na.rm = TRUE), #averaging temperature at duplicate depths
+    Salinity       = mean(Salinity,        na.rm = TRUE), #averaging salinity at duplicate depths
+    Light              = mean(Light,               na.rm = TRUE), #averaging Light at duplicate depths
+    .groups = "drop"
+  ) |>
+  group_by(ID, Date, Year, Month, lat, long,) |> #trapezoid integration over depth profile within each station
+  summarise(
+    calanus_wc_total      = trapz(calanus.total.m3), #Calanus trapezoid integration (unit multiplication: ind m-3 × m = ind m-2)
+    calanus_wc_I      = trapz(calanus.I.m3),
+    calanus_wc_II      = trapz(calanus.II.m3),
+    calanus_wc_III      = trapz(calanus.III.m3),
+    calanus_wc_IV      = trapz(calanus.IV.m3),
+    calanus_wc_V      = trapz(calanus.V.m3),
+    calanus_wc_Adult      = trapz(calanus.Adult.m3),
+    total_zoo_wc    = trapz(total.zpl.m3), #Total zooplankton trapezoid integration (unit multiplication: ind m-3 × m = ind m-2)
+    temp_mean       = mean(Temp,      na.rm = TRUE), #Calculating mean temperature through the water column
+    salinity_mean   = mean(Salinity, na.rm = TRUE), #Calculating mean salinity through the water column
+    Light_mean        = mean(Light,        na.rm = TRUE), #Calculating mean Light through the water column
+    max_depth       = max(sample.depth..m.), #assigning max_depth
+    n_depths        = n(), #calculating the number of depth stratified samples collected at each station
+    .groups = "drop" #dropping the grouping
+  ) |>
+  #cleaning up
+  mutate(
+    Month   = as.numeric(Month), #making month numeric
+    Year    = as.numeric(Year), #making year numeric
+    year_c    = Year - mean(Year),   #centering year for model stability
+    Light_mean  = if_else(Light_mean  < 0, 0, Light_mean), #removing unrealistic values of Light (light cannot be negative) 
+    temp_mean = if_else(temp_mean < 0, 0, temp_mean), #removing negative water temperatures and keeping the lowest temp at 0
+    log_calanus_total = log(calanus_wc_total + 0.001), #logging integrated calanus and adding a small constant to avoid logging 0  
+    log_calanus_I = log(calanus_wc_I + 0.001),
+    log_calanus_II = log(calanus_wc_II + 0.001),
+    log_calanus_III = log(calanus_wc_III + 0.001),
+    log_calanus_IV = log(calanus_wc_IV + 0.001),
+    log_calanus_V = log(calanus_wc_V + 0.001),
+    log_calanus_Adult = log(calanus_wc_Adult + 0.001)
+  )
+```

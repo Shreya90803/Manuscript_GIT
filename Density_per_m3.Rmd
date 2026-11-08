@@ -1,0 +1,65 @@
+---
+title: "Density"
+author: "Shreya Vinodh"
+date: "2026-11-08"
+output: html_document
+---
+#Setting up my system
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+base_dir="C:/Shreya/NARW Thesis/Data/"
+```
+
+#Plourde next steps - in a loop 
+```{r}
+library(dplyr)
+library(purrr)
+
+#Building the bins
+station_bins <- station_data |>
+  rowwise() |>
+  mutate(actual_depth = list({
+    end_val <- floor(max_depth / 5) * 5 - 2.5
+    if (end_val < 2.5) 2.5 else seq(2.5, end_val, by = 5)
+  })) |>
+  unnest(actual_depth) |>
+  ungroup() |>
+  mutate(
+    perc_depth  = actual_depth / max_depth,
+    Month       = factor(Month, levels = levels(df_vertical$Month)),
+    Temp        = temp_mean,
+    Salinity    = salinity_mean,
+    Light       = Light_mean,
+    time_of_day = mean(df_vertical$time_of_day, na.rm = TRUE)
+  )
+
+#Named list of models
+models <- list(
+  I     = WC_position_gam_I,
+  II    = WC_position_gam_II,
+  III   = WC_position_gam_III,
+  IV    = WC_position_gam_IV,
+  V     = WC_position_gam_V,
+  Adult = WC_position_gam_Adult
+)
+
+#Function to predict + convert for one stage
+predict_stage <- function(stage, model, bins) {
+  wc_col <- paste0("calanus_wc_", stage)
+
+  bins |>
+    mutate(prop_cum_pred = predict(model, newdata = bins, type = "response")) |>
+    arrange(ID, Date, actual_depth) |>
+    group_by(ID, Date) |>
+    mutate(
+      prop_cum_mono = cummax(prop_cum_pred),
+      prop_5m       = c(prop_cum_mono[1], diff(prop_cum_mono)) * 100,
+      density_m3    = (prop_5m / 5) * .data[[wc_col]]
+    ) |>
+    ungroup() |>
+    mutate(stage = stage)
+}
+
+#Run for all stages 
+station_bins_all <- imap_dfr(models, \(m, stage) predict_stage(stage, m, station_bins))
+```

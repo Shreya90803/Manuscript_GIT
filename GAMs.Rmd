@@ -1,0 +1,186 @@
+---
+title: "GAMs"
+author: "Shreya Vinodh"
+date: "2026-11-08"
+output: html_document
+---
+
+#Setting up my system
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+base_dir="C:/Shreya/NARW Thesis/Data/"
+```
+
+#GAM 1 - ENVIRONMENTAL VARIABLES AFFECTING CALANUS
+How do these environmental factors contribute to where calanus sit in the water column?
+```{r}
+df_vertical$Month <- factor(df_vertical$Month, levels = c("1","2","3","4","5")) #convering Month into a factor 
+#df_vertical$time_of_day=df_vertical$time_num
+#creating a GAM with proportion of cumulative calanus as the response variable and covariates as described in the lines below
+WC_position_gam_total <- gam(
+  prop_cum_total ~ 
+    s(Temp) +                #temperature
+    s(Salinity) +           #salinity
+    s(time_of_day)+              #time of day
+    s(Light)+                   #light intensity
+    s(max_depth) +            #max_depth
+    ti(perc_depth, by=Month) +   #depth position with seasonality accounted for by month as a factor
+                #maximum station depth
+    ti(perc_depth, max_depth),    #Interaction between percent depth (perc_depth) and maximum depth (max_depth)
+  family  = betar(link = "logit"), #beta family 
+  method  = "REML",           #restricted maximum likelihood 
+  select = T,                 #adding shrinkage to see if any variables need to be removed
+  data    = df_vertical       #assigning a dataframe 
+) 
+
+summary(WC_position_gam_total) #summarising the GAM
+plot_position_gam=plot(WC_position_gam_total) #plotting the GAM
+#x1=data.frame(plot_position_gam[[5]]$x)
+#y1=data.frame(plot_position_gam[[5]]$fit)
+gam.check(WC_position_gam_total) #checking the GAM 
+
+#############################################################################################
+
+WC_position_gam_I <- gam(
+  prop_cum_I ~ 
+    s(Temp) +                #temperature
+    s(Salinity) +           #salinity
+    s(time_of_day)+              #time of day
+    s(Light)+                   #light intensity
+    s(max_depth) +            #max_depth
+    ti(perc_depth, by=Month) +   #depth position with seasonality accounted for by month as a factor
+                #maximum station depth
+    ti(perc_depth, max_depth),    #Interaction between percent depth (perc_depth) and maximum depth (max_depth)
+  family  = betar(link = "logit"), #beta family 
+  method  = "REML",           #restricted maximum likelihood 
+  select = T,                 #adding shrinkage to see if any variables need to be removed
+  data    = df_vertical       #assigning a dataframe 
+) 
+
+summary(WC_position_gam_I) #summarising the GAM
+plot_position_gam_I=plot(WC_position_gam_I) #plotting the GAM
+#x1=data.frame(plot_position_gam_I[[5]]$x)
+#y1=data.frame(plot_position_gam_I[[5]]$fit)
+gam.check(WC_position_gam_I) #checking the GAM 
+
+#############################################################################################
+
+WC_position_gam_II <- gam(
+  prop_cum_II ~ 
+    s(Temp) +                #temperature
+    s(Salinity) +           #salinity
+    s(time_of_day)+              #time of day
+    s(Light)+                   #light intensity
+    s(max_depth) +            #max_depth
+    ti(perc_depth, by=Month) +   #depth position with seasonality accounted for by month as a factor
+                #maximum station depth
+    ti(perc_depth, max_depth),    #Interaction between percent depth (perc_depth) and maximum depth (max_depth)
+  family  = betar(link = "logit"), #beta family 
+  method  = "REML",           #restricted maximum likelihood 
+  select = T,                 #adding shrinkage to see if any variables need to be removed
+  data    = df_vertical       #assigning a dataframe 
+) 
+
+summary(WC_position_gam_II) #summarising the GAM
+plot_position_gam_II=plot(WC_position_gam_II) #plotting the GAM
+#x1=data.frame(plot_position_gam[[5]]$x)
+#y1=data.frame(plot_position_gam[[5]]$fit)
+gam.check(WC_position_gam_II) #checking the GAM 
+
+#############################################################################################
+
+WC_position_gam_III <- gam(
+  prop_cum_III ~ 
+    s(Temp) +                #temperature
+    s(Salinity) +           #salinity
+    s(time_of_day)+              #time of day
+    s(Light)+                   #light intensity
+    s(max_depth) +            #max_depth
+    ti(perc_depth, by=Month) +   #depth position with seasonality accounted for by month as a factor
+                #maximum station depth
+    ti(perc_depth, max_depth),    #Interaction between percent depth (perc_depth) and maximum depth (max_depth)
+  family  = betar(link = "logit"), #beta family 
+  method  = "REML",           #restricted maximum likelihood 
+  select = T,                 #adding shrinkage to see if any variables need to be removed
+  data    = df_vertical       #assigning a dataframe 
+) 
+
+summary(WC_position_gam_III) #summarising the GAM
+plot_position_gam_III=plot(WC_position_gam_III) #plotting the GAM
+#x1=data.frame(plot_position_gam[[5]]$x)
+#y1=data.frame(plot_position_gam[[5]]$fit)
+gam.check(WC_position_gam_III) #checking the GAM 
+
+#############################################################################################
+
+WC_position_gam_IV <- gam(
+  prop_cum_IV ~ 
+    s(Temp) +                #temperature
+    s(Salinity) +           #salinity
+    s(time_of_day)+              #time of day
+    s(Light)+                   #light intensity
+    s(max_depth) +            #max_depth
+    ti(perc_depth, by=Month) +   #depth position with seasonality accounted for by month as a factor
+                #maximum station depth
+    ti(perc_depth, max_depth),    #Interaction between percent depth (perc_depth) and maximum depth (max_depth)
+  family  = betar(link = "logit"), #beta family 
+  method  = "REML",           #restricted maximum likelihood 
+  select = T,                 #adding shrinkage to see if any variables need to be removed
+  data    = df_vertical       #assigning a dataframe 
+) 
+
+summary(WC_position_gam_IV) #summarising the GAM
+plot_position_gam_IV=plot(WC_position_gam_IV) #plotting the GAM
+#x1=data.frame(plot_position_gam[[5]]$x)
+#y1=data.frame(plot_position_gam[[5]]$fit)
+gam.check(WC_position_gam_IV) #checking the GAM 
+
+#############################################################################################
+
+WC_position_gam_V <- gam(
+  prop_cum_V ~ 
+    s(Temp) +                #temperature
+    s(Salinity) +           #salinity
+    s(time_of_day)+              #time of day
+    s(Light)+                   #light intensity
+    s(max_depth) +            #max_depth
+    ti(perc_depth, by=Month) +   #depth position with seasonality accounted for by month as a factor
+                #maximum station depth
+    ti(perc_depth, max_depth),    #Interaction between percent depth (perc_depth) and maximum depth (max_depth)
+  family  = betar(link = "logit"), #beta family 
+  method  = "REML",           #restricted maximum likelihood 
+  select = T,                 #adding shrinkage to see if any variables need to be removed
+  data    = df_vertical       #assigning a dataframe 
+) 
+
+summary(WC_position_gam_V) #summarising the GAM
+plot_position_gam_V=plot(WC_position_gam_V) #plotting the GAM
+#x1=data.frame(plot_position_gam[[5]]$x)
+#y1=data.frame(plot_position_gam[[5]]$fit)
+gam.check(WC_position_gam_V) #checking the GAM 
+
+#############################################################################################
+
+WC_position_gam_Adult <- gam(
+  prop_cum_Adult ~ 
+    s(Temp) +                #temperature
+    s(Salinity) +           #salinity
+    s(time_of_day)+              #time of day
+    s(Light)+                   #light intensity
+    s(max_depth) +            #max_depth
+    ti(perc_depth, by=Month) +   #depth position with seasonality accounted for by month as a factor
+                #maximum station depth
+    ti(perc_depth, max_depth),    #Interaction between percent depth (perc_depth) and maximum depth (max_depth)
+  family  = betar(link = "logit"), #beta family 
+  method  = "REML",           #restricted maximum likelihood 
+  select = T,                 #adding shrinkage to see if any variables need to be removed
+  data    = df_vertical       #assigning a dataframe 
+) 
+
+summary(WC_position_gam_Adult) #summarising the GAM
+plot_position_gam_Adult=plot(WC_position_gam_Adult) #plotting the GAM
+#x1=data.frame(plot_position_gam[[5]]$x)
+#y1=data.frame(plot_position_gam[[5]]$fit)
+gam.check(WC_position_gam_Adult) #checking the GAM 
+
+```

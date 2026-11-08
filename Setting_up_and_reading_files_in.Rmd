@@ -4,6 +4,11 @@ author: "Shreya Vinodh"
 date: "2026-11-08"
 output: html_document
 ---
+#Setting up my system
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+base_dir="C:/Shreya/NARW Thesis/Data/"
+```
 
 #Libraries needed to run codes in this project
 ```{r}

@@ -1,0 +1,789 @@
+---
+title: "Plots"
+author: "Shreya Vinodh"
+date: "2026-11-08"
+output: html_document
+---
+
+#Setting up my system
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+base_dir="C:/Shreya/NARW Thesis/Data/"
+```
+
+Total
+```{r}
+pred_vertical <- expand.grid(                       #making a new data frame to predict on 
+  perc_depth        = seq(2.5, 42.5, by = 5) / 45,  #midpoints of every bin at every 5m, divided by station depth
+  max_depth = 45,                                   #setting max_depth as a fixed 45m depth
+  Month           = 1:5                             #months going from January to May
+) |>
+  mutate(
+    actual_depth = perc_depth * max_depth,                              #converts back to metres
+    Temp        = mean(df_vertical$Temp,      na.rm = TRUE),            #holding temperature at its mean 
+    Salinity   = mean(df_vertical$Salinity, na.rm = TRUE),              #holding salinity at its mean
+    Light          = mean(df_vertical$Light,        na.rm = TRUE),      #holding Light at its mean
+    time_of_day=mean(df_vertical$time_of_day, na.rm = T)                #holding time of day at its mean
+    #Year       = mean(as.numeric(df_vertical$Year), na.rm = TRUE)
+  )
+
+
+pred_vertical$prop_cum_pred <- predict(WC_position_gam_total, newdata = pred_vertical, type = "response") #Predicting cumulative proportion at midpoint of each bin 
+
+#Converting cumulative proportion to per-bin proportion 
+pred_vertical <- pred_vertical |>
+  arrange(Month, actual_depth) |>                                #arranging data by month and depth
+  group_by(Month) |>                                             #grouping by month 
+  mutate(
+    prop_cum_mono=cummax(prop_cum_pred),                        #create a cumulative proportion column
+    prop_bin = c(prop_cum_mono[1], diff(prop_cum_mono)) * 100   #finding proportion per bin
+  ) |>
+  ungroup() |>                                                 #ungrouping 
+  mutate(
+    Month_label = factor(Month, labels = c("January","February",
+                                              "March","April","May"))   #labeling months by thier names 
+  )
+
+depth_summary <- Ctd_Verticals_LJ |>                                 #creating a df with depth bin start and end along with calanus concentration 
+  mutate(depth_bin = floor(sample.depth..m. / 5) * 5) |>             #mutating the bins 
+  group_by(Month, depth_bin) |>                                      #grouping by month and depth bin 
+  summarise(calanus_conc = mean(calanus.total.m3, na.rm = TRUE), .groups = "drop") |>  #taking calanus mean within each bin 
+  mutate(depth_bin_end = depth_bin + 5)                              #creating an upper edge for each bin
+
+prop_df <- pred_vertical |>                                     #creating new df called prop_df
+  transmute(Month = as.integer(Month),                          #Keeps only selected columns in the df; selecting month as an integer
+            depth_bin = floor(actual_depth / 5) * 5,            #creating a depth_bin column 
+            prop_bin)                                           #saving prop_bin
+
+dens_df <- depth_summary |>                                    #creating a dens_df df
+  transmute(Month = as.integer(as.character(Month)),           #keeps only selected columns in the df; selecting month as an integer
+            depth_bin,                                         #saves depth_bin
+            calanus_conc)                                      #saves calanus_conc
+
+combined <- full_join(prop_df, dens_df, by = c("Month", "depth_bin")) |>       #creating a combined df of the above two df
+  mutate(Month_label = factor(Month, labels = c("January","February",          #labelling month by their names 
+                                                 "March","April","May")))
+
+
+scale_factor <- max(combined$calanus_conc, na.rm = TRUE) /     
+                max(combined$prop_bin,   na.rm = TRUE)  #calculating a scaling factor to have proportion and actual c. fin abundance on the same graph
+
+combined_long <- combined |>                                    #creating a new df in long format
+  mutate(calanus_scaled = calanus_conc / scale_factor) |>       #creating calanus_sclaed for observed calanus using the sclae_factor
+  pivot_longer(cols = c(prop_bin, calanus_scaled),              #changing to long format with prop_bin and calanus_sclaed in the same column
+               names_to = "metric", values_to = "value") |>
+  mutate(metric = factor(metric,
+                          levels = c("prop_bin", "calanus_scaled"),           #creating two levels for metric 
+                          labels = c("Predicted % prop. of abundance", "Observed C. finmarchicus density")))  #labelling the two levels
+
+
+combined_plot=ggplot(combined_long, aes(x = depth_bin, y = value, fill = metric)) + #creating a ggplot object
+  geom_col(position = position_dodge(width = 4), width = 4, na.rm = TRUE) +  #Creating a bar chart 
+ # scale_fill_manual(values = c(expression("Predicted % prop. of abundance"    = "cadetblue3",
+                                #"Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")" = "blue4"),
+  #                              "Observed density" = expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")"="blue4"))
+   #                  name = NULL)) +
+  scale_fill_manual(
+  values = c("Predicted % prop. of abundance"    = "cadetblue3", "Observed C. finmarchicus density" = "blue4"), #setting colours for the two bars
+  labels = c(    #Setting label names for the bars 
+    expression("Predicted % prop. of abundance"),
+    expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")")
+  ),
+  name = NULL #removes axes labels 
+)+
+  scale_x_continuous(breaks = seq(0, 45, 10), name = "Depth (m)") +   #setting x-axis sequence 
+  scale_y_continuous(
+    name     = expression("Predicted % proportion of abundance"),   #setting y-axis label 
+    sec.axis = sec_axis(~ . * scale_factor,                                                             #creating the second y-axis 
+                         name = expression("Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")") #labelling the second y-axis
+  )) +
+  facet_wrap(~ Month_label, nrow = 1) +     #faceting by month for the five different months 
+  #labs(title = expression(italic("Calanus")~"vertical distribution — Cape Cod Bay")) +
+  theme_bw() +  #setting a theme
+  theme(
+    strip.text         = element_text(face = "bold", size = 16),                          #making month labels bold and increasing their size 
+    panel.spacing      = unit(0.3, "cm"),                                                 #setting spacing between the different month panels
+    axis.title.x       = element_text(face = "bold", size = 14),                          #making x-axis title bold and increasing the size
+    axis.text.x        = element_text(face = "bold", size = 11),                          #making x-axis ticks bold and increasing the size
+    axis.title.y.left  = element_text(color = "cadetblue3", face = "bold", size = 16),    #making left y-axis title bold, increasing size and                                                                                              setting colour 
+    axis.text.y.left   = element_text(color = "cadetblue3", face = "bold", size = 11),    #making left y-axis ticks bold, increasing size and                                                                                              setting colour
+    axis.title.y.right = element_text(color = "blue4", face = "bold", size = 16),         #making right y-axis title bold, increasing size and                                                                                             setting colour          
+    axis.text.y.right  = element_text(color = "blue4", face = "bold", size = 11),         #making right y-axis ticks bold, increasing size and                                                                                             setting colour
+    axis.ticks.length  = unit(0.2, "cm"),                                                 #increasing axis tick size
+    axis.ticks         = element_line(linewidth = 0.6),                                   #setting thickness of ticks                   
+    legend.position   = "bottom",                                                         #setting legend position to be at the bottom
+    legend.title       = element_text(size = 16, face = "bold"),                          #making legend bold and increasing text size
+    legend.text        = element_text(size = 14),                                         #making legend text larger
+    legend.key.size    = unit(1, "cm")                                                    #increasing the legend keys (size of colour squares)
+  )
+
+combined_plot
+
+ggsave("Combined_dens_prop_total.png", combined_plot, width = 9, height = 7, dpi = 300)        #saving the ggplot in high resolution
+```
+
+Calanus I
+```{r}
+pred_vertical <- expand.grid(                       #making a new data frame to predict on 
+  perc_depth        = seq(2.5, 42.5, by = 5) / 45,  #midpoints of every bin at every 5m, divided by station depth
+  max_depth = 45,                                   #setting max_depth as a fixed 45m depth
+  Month           = 1:5                             #months going from January to May
+) |>
+  mutate(
+    actual_depth = perc_depth * max_depth,                              #converts back to metres
+    Temp        = mean(df_vertical$Temp,      na.rm = TRUE),            #holding temperature at its mean 
+    Salinity   = mean(df_vertical$Salinity, na.rm = TRUE),              #holding salinity at its mean
+    Light          = mean(df_vertical$Light,        na.rm = TRUE),      #holding Light at its mean
+    time_of_day=mean(df_vertical$time_of_day, na.rm = T)                #holding time of day at its mean
+    #Year       = mean(as.numeric(df_vertical$Year), na.rm = TRUE)
+  )
+
+
+pred_vertical$prop_cum_pred <- predict(WC_position_gam_I, newdata = pred_vertical, type = "response") #Predicting cumulative proportion at midpoint of each bin 
+
+#Converting cumulative proportion to per-bin proportion 
+pred_vertical <- pred_vertical |>
+  arrange(Month, actual_depth) |>                                #arranging data by month and depth
+  group_by(Month) |>                                             #grouping by month 
+  mutate(
+    prop_cum_mono=cummax(prop_cum_pred),                        #create a cumulative proportion column
+    prop_bin = c(prop_cum_mono[1], diff(prop_cum_mono)) * 100   #finding proportion per bin
+  ) |>
+  ungroup() |>                                                 #ungrouping 
+  mutate(
+    Month_label = factor(Month, labels = c("January","February",
+                                              "March","April","May"))   #labeling months by thier names 
+  )
+
+depth_summary <- Ctd_Verticals_LJ |>                                 #creating a df with depth bin start and end along with calanus concentration 
+  mutate(depth_bin = floor(sample.depth..m. / 5) * 5) |>             #mutating the bins 
+  group_by(Month, depth_bin) |>                                      #grouping by month and depth bin 
+  summarise(calanus_conc = mean(calanus.I.m3, na.rm = TRUE), .groups = "drop") |>  #taking calanus mean within each bin 
+  mutate(depth_bin_end = depth_bin + 5)                              #creating an upper edge for each bin
+
+prop_df <- pred_vertical |>                                     #creating new df called prop_df
+  transmute(Month = as.integer(Month),                          #Keeps only selected columns in the df; selecting month as an integer
+            depth_bin = floor(actual_depth / 5) * 5,            #creating a depth_bin column 
+            prop_bin)                                           #saving prop_bin
+
+dens_df <- depth_summary |>                                    #creating a dens_df df
+  transmute(Month = as.integer(as.character(Month)),           #keeps only selected columns in the df; selecting month as an integer
+            depth_bin,                                         #saves depth_bin
+            calanus_conc)                                      #saves calanus_conc
+
+combined <- full_join(prop_df, dens_df, by = c("Month", "depth_bin")) |>       #creating a combined df of the above two df
+  mutate(Month_label = factor(Month, labels = c("January","February",          #labelling month by their names 
+                                                 "March","April","May")))
+
+
+scale_factor <- max(combined$calanus_conc, na.rm = TRUE) /     
+                max(combined$prop_bin,   na.rm = TRUE)  #calculating a scaling factor to have proportion and actual c. fin abundance on the same graph
+
+combined_long <- combined |>                                    #creating a new df in long format
+  mutate(calanus_scaled = calanus_conc / scale_factor) |>       #creating calanus_sclaed for observed calanus using the sclae_factor
+  pivot_longer(cols = c(prop_bin, calanus_scaled),              #changing to long format with prop_bin and calanus_sclaed in the same column
+               names_to = "metric", values_to = "value") |>
+  mutate(metric = factor(metric,
+                          levels = c("prop_bin", "calanus_scaled"),           #creating two levels for metric 
+                          labels = c("Predicted % prop. of abundance", "Observed C. finmarchicus density")))  #labelling the two levels
+
+
+combined_plot_I=ggplot(combined_long, aes(x = depth_bin, y = value, fill = metric)) + #creating a ggplot object
+  geom_col(position = position_dodge(width = 4), width = 4, na.rm = TRUE) +  #Creating a bar chart 
+ # scale_fill_manual(values = c(expression("Predicted % prop. of abundance"    = "cadetblue3",
+                                #"Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")" = "blue4"),
+  #                              "Observed density" = expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")"="blue4"))
+   #                  name = NULL)) +
+  scale_fill_manual(
+  values = c("Predicted % prop. of abundance"    = "cadetblue3", "Observed C. finmarchicus density" = "blue4"), #setting colours for the two bars
+  labels = c(    #Setting label names for the bars 
+    expression("Predicted % prop. of abundance"),
+    expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")")
+  ),
+  name = NULL #removes axes labels 
+)+
+  scale_x_continuous(breaks = seq(0, 45, 10), name = "Depth (m)") +   #setting x-axis sequence 
+  scale_y_continuous(
+    name     = expression("Predicted % proportion of abundance"),   #setting y-axis label 
+    sec.axis = sec_axis(~ . * scale_factor,                                                             #creating the second y-axis 
+                         name = expression("Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")") #labelling the second y-axis
+  )) +
+  facet_wrap(~ Month_label, nrow = 1) +     #faceting by month for the five different months 
+  #labs(title = expression(italic("Calanus")~"vertical distribution — Cape Cod Bay")) +
+  theme_bw() +  #setting a theme
+  theme(
+    strip.text         = element_text(face = "bold", size = 16),                          #making month labels bold and increasing their size 
+    panel.spacing      = unit(0.3, "cm"),                                                 #setting spacing between the different month panels
+    axis.title.x       = element_text(face = "bold", size = 14),                          #making x-axis title bold and increasing the size
+    axis.text.x        = element_text(face = "bold", size = 11),                          #making x-axis ticks bold and increasing the size
+    axis.title.y.left  = element_text(color = "cadetblue3", face = "bold", size = 16),    #making left y-axis title bold, increasing size and                                                                                              setting colour 
+    axis.text.y.left   = element_text(color = "cadetblue3", face = "bold", size = 11),    #making left y-axis ticks bold, increasing size and                                                                                              setting colour
+    axis.title.y.right = element_text(color = "blue4", face = "bold", size = 16),         #making right y-axis title bold, increasing size and                                                                                             setting colour          
+    axis.text.y.right  = element_text(color = "blue4", face = "bold", size = 11),         #making right y-axis ticks bold, increasing size and                                                                                             setting colour
+    axis.ticks.length  = unit(0.2, "cm"),                                                 #increasing axis tick size
+    axis.ticks         = element_line(linewidth = 0.6),                                   #setting thickness of ticks                   
+    legend.position   = "bottom",                                                         #setting legend position to be at the bottom
+    legend.title       = element_text(size = 16, face = "bold"),                          #making legend bold and increasing text size
+    legend.text        = element_text(size = 14),                                         #making legend text larger
+    legend.key.size    = unit(1, "cm")                                                    #increasing the legend keys (size of colour squares)
+  )
+
+combined_plot_I
+
+ggsave("Combined_dens_prop_I.png", combined_plot, width = 9, height = 7, dpi = 300)        #saving the ggplot in high resolution
+```
+
+Calanus II
+```{r}
+pred_vertical <- expand.grid(                       #making a new data frame to predict on 
+  perc_depth        = seq(2.5, 42.5, by = 5) / 45,  #midpoints of every bin at every 5m, divided by station depth
+  max_depth = 45,                                   #setting max_depth as a fixed 45m depth
+  Month           = 1:5                             #months going from January to May
+) |>
+  mutate(
+    actual_depth = perc_depth * max_depth,                              #converts back to metres
+    Temp        = mean(df_vertical$Temp,      na.rm = TRUE),            #holding temperature at its mean 
+    Salinity   = mean(df_vertical$Salinity, na.rm = TRUE),              #holding salinity at its mean
+    Light          = mean(df_vertical$Light,        na.rm = TRUE),      #holding Light at its mean
+    time_of_day=mean(df_vertical$time_of_day, na.rm = T)                #holding time of day at its mean
+    #Year       = mean(as.numeric(df_vertical$Year), na.rm = TRUE)
+  )
+
+
+pred_vertical$prop_cum_pred <- predict(WC_position_gam_II, newdata = pred_vertical, type = "response") #Predicting cumulative proportion at midpoint of each bin 
+
+#Converting cumulative proportion to per-bin proportion 
+pred_vertical <- pred_vertical |>
+  arrange(Month, actual_depth) |>                                #arranging data by month and depth
+  group_by(Month) |>                                             #grouping by month 
+  mutate(
+    prop_cum_mono=cummax(prop_cum_pred),                        #create a cumulative proportion column
+    prop_bin = c(prop_cum_mono[1], diff(prop_cum_mono)) * 100   #finding proportion per bin
+  ) |>
+  ungroup() |>                                                 #ungrouping 
+  mutate(
+    Month_label = factor(Month, labels = c("January","February",
+                                              "March","April","May"))   #labeling months by thier names 
+  )
+
+depth_summary <- Ctd_Verticals_LJ |>                                 #creating a df with depth bin start and end along with calanus concentration 
+  mutate(depth_bin = floor(sample.depth..m. / 5) * 5) |>             #mutating the bins 
+  group_by(Month, depth_bin) |>                                      #grouping by month and depth bin 
+  summarise(calanus_conc = mean(calanus.II.m3, na.rm = TRUE), .groups = "drop") |>  #taking calanus mean within each bin 
+  mutate(depth_bin_end = depth_bin + 5)                              #creating an upper edge for each bin
+
+prop_df <- pred_vertical |>                                     #creating new df called prop_df
+  transmute(Month = as.integer(Month),                          #Keeps only selected columns in the df; selecting month as an integer
+            depth_bin = floor(actual_depth / 5) * 5,            #creating a depth_bin column 
+            prop_bin)                                           #saving prop_bin
+
+dens_df <- depth_summary |>                                    #creating a dens_df df
+  transmute(Month = as.integer(as.character(Month)),           #keeps only selected columns in the df; selecting month as an integer
+            depth_bin,                                         #saves depth_bin
+            calanus_conc)                                      #saves calanus_conc
+
+combined <- full_join(prop_df, dens_df, by = c("Month", "depth_bin")) |>       #creating a combined df of the above two df
+  mutate(Month_label = factor(Month, labels = c("January","February",          #labelling month by their names 
+                                                 "March","April","May")))
+
+
+scale_factor <- max(combined$calanus_conc, na.rm = TRUE) /     
+                max(combined$prop_bin,   na.rm = TRUE)  #calculating a scaling factor to have proportion and actual c. fin abundance on the same graph
+
+combined_long <- combined |>                                    #creating a new df in long format
+  mutate(calanus_scaled = calanus_conc / scale_factor) |>       #creating calanus_sclaed for observed calanus using the sclae_factor
+  pivot_longer(cols = c(prop_bin, calanus_scaled),              #changing to long format with prop_bin and calanus_sclaed in the same column
+               names_to = "metric", values_to = "value") |>
+  mutate(metric = factor(metric,
+                          levels = c("prop_bin", "calanus_scaled"),           #creating two levels for metric 
+                          labels = c("Predicted % prop. of abundance", "Observed C. finmarchicus density")))  #labelling the two levels
+
+
+combined_plot_II=ggplot(combined_long, aes(x = depth_bin, y = value, fill = metric)) + #creating a ggplot object
+  geom_col(position = position_dodge(width = 4), width = 4, na.rm = TRUE) +  #Creating a bar chart 
+ # scale_fill_manual(values = c(expression("Predicted % prop. of abundance"    = "cadetblue3",
+                                #"Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")" = "blue4"),
+  #                              "Observed density" = expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")"="blue4"))
+   #                  name = NULL)) +
+  scale_fill_manual(
+  values = c("Predicted % prop. of abundance"    = "cadetblue3", "Observed C. finmarchicus density" = "blue4"), #setting colours for the two bars
+  labels = c(    #Setting label names for the bars 
+    expression("Predicted % prop. of abundance"),
+    expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")")
+  ),
+  name = NULL #removes axes labels 
+)+
+  scale_x_continuous(breaks = seq(0, 45, 10), name = "Depth (m)") +   #setting x-axis sequence 
+  scale_y_continuous(
+    name     = expression("Predicted % proportion of abundance"),   #setting y-axis label 
+    sec.axis = sec_axis(~ . * scale_factor,                                                             #creating the second y-axis 
+                         name = expression("Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")") #labelling the second y-axis
+  )) +
+  facet_wrap(~ Month_label, nrow = 1) +     #faceting by month for the five different months 
+  #labs(title = expression(italic("Calanus")~"vertical distribution — Cape Cod Bay")) +
+  theme_bw() +  #setting a theme
+  theme(
+    strip.text         = element_text(face = "bold", size = 16),                          #making month labels bold and increasing their size 
+    panel.spacing      = unit(0.3, "cm"),                                                 #setting spacing between the different month panels
+    axis.title.x       = element_text(face = "bold", size = 14),                          #making x-axis title bold and increasing the size
+    axis.text.x        = element_text(face = "bold", size = 11),                          #making x-axis ticks bold and increasing the size
+    axis.title.y.left  = element_text(color = "cadetblue3", face = "bold", size = 16),    #making left y-axis title bold, increasing size and                                                                                              setting colour 
+    axis.text.y.left   = element_text(color = "cadetblue3", face = "bold", size = 11),    #making left y-axis ticks bold, increasing size and                                                                                              setting colour
+    axis.title.y.right = element_text(color = "blue4", face = "bold", size = 16),         #making right y-axis title bold, increasing size and                                                                                             setting colour          
+    axis.text.y.right  = element_text(color = "blue4", face = "bold", size = 11),         #making right y-axis ticks bold, increasing size and                                                                                             setting colour
+    axis.ticks.length  = unit(0.2, "cm"),                                                 #increasing axis tick size
+    axis.ticks         = element_line(linewidth = 0.6),                                   #setting thickness of ticks                   
+    legend.position   = "bottom",                                                         #setting legend position to be at the bottom
+    legend.title       = element_text(size = 16, face = "bold"),                          #making legend bold and increasing text size
+    legend.text        = element_text(size = 14),                                         #making legend text larger
+    legend.key.size    = unit(1, "cm")                                                    #increasing the legend keys (size of colour squares)
+  )
+
+combined_plot_II
+
+ggsave("Combined_dens_prop_II.png", combined_plot, width = 9, height = 7, dpi = 300)        #saving the ggplot in high resolution
+```
+
+Calanus III
+```{r}
+pred_vertical <- expand.grid(                       #making a new data frame to predict on 
+  perc_depth        = seq(2.5, 42.5, by = 5) / 45,  #midpoints of every bin at every 5m, divided by station depth
+  max_depth = 45,                                   #setting max_depth as a fixed 45m depth
+  Month           = 1:5                             #months going from January to May
+) |>
+  mutate(
+    actual_depth = perc_depth * max_depth,                              #converts back to metres
+    Temp        = mean(df_vertical$Temp,      na.rm = TRUE),            #holding temperature at its mean 
+    Salinity   = mean(df_vertical$Salinity, na.rm = TRUE),              #holding salinity at its mean
+    Light          = mean(df_vertical$Light,        na.rm = TRUE),      #holding Light at its mean
+    time_of_day=mean(df_vertical$time_of_day, na.rm = T)                #holding time of day at its mean
+    #Year       = mean(as.numeric(df_vertical$Year), na.rm = TRUE)
+  )
+
+
+pred_vertical$prop_cum_pred <- predict(WC_position_gam_III, newdata = pred_vertical, type = "response") #Predicting cumulative proportion at midpoint of each bin 
+
+#Converting cumulative proportion to per-bin proportion 
+pred_vertical <- pred_vertical |>
+  arrange(Month, actual_depth) |>                                #arranging data by month and depth
+  group_by(Month) |>                                             #grouping by month 
+  mutate(
+    prop_cum_mono=cummax(prop_cum_pred),                        #create a cumulative proportion column
+    prop_bin = c(prop_cum_mono[1], diff(prop_cum_mono)) * 100   #finding proportion per bin
+  ) |>
+  ungroup() |>                                                 #ungrouping 
+  mutate(
+    Month_label = factor(Month, labels = c("January","February",
+                                              "March","April","May"))   #labeling months by thier names 
+  )
+
+depth_summary <- Ctd_Verticals_LJ |>                                 #creating a df with depth bin start and end along with calanus concentration 
+  mutate(depth_bin = floor(sample.depth..m. / 5) * 5) |>             #mutating the bins 
+  group_by(Month, depth_bin) |>                                      #grouping by month and depth bin 
+  summarise(calanus_conc = mean(calanus.III.m3, na.rm = TRUE), .groups = "drop") |>  #taking calanus mean within each bin 
+  mutate(depth_bin_end = depth_bin + 5)                              #creating an upper edge for each bin
+
+prop_df <- pred_vertical |>                                     #creating new df called prop_df
+  transmute(Month = as.integer(Month),                          #Keeps only selected columns in the df; selecting month as an integer
+            depth_bin = floor(actual_depth / 5) * 5,            #creating a depth_bin column 
+            prop_bin)                                           #saving prop_bin
+
+dens_df <- depth_summary |>                                    #creating a dens_df df
+  transmute(Month = as.integer(as.character(Month)),           #keeps only selected columns in the df; selecting month as an integer
+            depth_bin,                                         #saves depth_bin
+            calanus_conc)                                      #saves calanus_conc
+
+combined <- full_join(prop_df, dens_df, by = c("Month", "depth_bin")) |>       #creating a combined df of the above two df
+  mutate(Month_label = factor(Month, labels = c("January","February",          #labelling month by their names 
+                                                 "March","April","May")))
+
+
+scale_factor <- max(combined$calanus_conc, na.rm = TRUE) /     
+                max(combined$prop_bin,   na.rm = TRUE)  #calculating a scaling factor to have proportion and actual c. fin abundance on the same graph
+
+combined_long <- combined |>                                    #creating a new df in long format
+  mutate(calanus_scaled = calanus_conc / scale_factor) |>       #creating calanus_sclaed for observed calanus using the sclae_factor
+  pivot_longer(cols = c(prop_bin, calanus_scaled),              #changing to long format with prop_bin and calanus_sclaed in the same column
+               names_to = "metric", values_to = "value") |>
+  mutate(metric = factor(metric,
+                          levels = c("prop_bin", "calanus_scaled"),           #creating two levels for metric 
+                          labels = c("Predicted % prop. of abundance", "Observed C. finmarchicus density")))  #labelling the two levels
+
+
+combined_plot_III=ggplot(combined_long, aes(x = depth_bin, y = value, fill = metric)) + #creating a ggplot object
+  geom_col(position = position_dodge(width = 4), width = 4, na.rm = TRUE) +  #Creating a bar chart 
+ # scale_fill_manual(values = c(expression("Predicted % prop. of abundance"    = "cadetblue3",
+                                #"Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")" = "blue4"),
+  #                              "Observed density" = expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")"="blue4"))
+   #                  name = NULL)) +
+  scale_fill_manual(
+  values = c("Predicted % prop. of abundance"    = "cadetblue3", "Observed C. finmarchicus density" = "blue4"), #setting colours for the two bars
+  labels = c(    #Setting label names for the bars 
+    expression("Predicted % prop. of abundance"),
+    expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")")
+  ),
+  name = NULL #removes axes labels 
+)+
+  scale_x_continuous(breaks = seq(0, 45, 10), name = "Depth (m)") +   #setting x-axis sequence 
+  scale_y_continuous(
+    name     = expression("Predicted % proportion of abundance"),   #setting y-axis label 
+    sec.axis = sec_axis(~ . * scale_factor,                                                             #creating the second y-axis 
+                         name = expression("Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")") #labelling the second y-axis
+  )) +
+  facet_wrap(~ Month_label, nrow = 1) +     #faceting by month for the five different months 
+  #labs(title = expression(italic("Calanus")~"vertical distribution — Cape Cod Bay")) +
+  theme_bw() +  #setting a theme
+  theme(
+    strip.text         = element_text(face = "bold", size = 16),                          #making month labels bold and increasing their size 
+    panel.spacing      = unit(0.3, "cm"),                                                 #setting spacing between the different month panels
+    axis.title.x       = element_text(face = "bold", size = 14),                          #making x-axis title bold and increasing the size
+    axis.text.x        = element_text(face = "bold", size = 11),                          #making x-axis ticks bold and increasing the size
+    axis.title.y.left  = element_text(color = "cadetblue3", face = "bold", size = 16),    #making left y-axis title bold, increasing size and                                                                                              setting colour 
+    axis.text.y.left   = element_text(color = "cadetblue3", face = "bold", size = 11),    #making left y-axis ticks bold, increasing size and                                                                                              setting colour
+    axis.title.y.right = element_text(color = "blue4", face = "bold", size = 16),         #making right y-axis title bold, increasing size and                                                                                             setting colour          
+    axis.text.y.right  = element_text(color = "blue4", face = "bold", size = 11),         #making right y-axis ticks bold, increasing size and                                                                                             setting colour
+    axis.ticks.length  = unit(0.2, "cm"),                                                 #increasing axis tick size
+    axis.ticks         = element_line(linewidth = 0.6),                                   #setting thickness of ticks                   
+    legend.position   = "bottom",                                                         #setting legend position to be at the bottom
+    legend.title       = element_text(size = 16, face = "bold"),                          #making legend bold and increasing text size
+    legend.text        = element_text(size = 14),                                         #making legend text larger
+    legend.key.size    = unit(1, "cm")                                                    #increasing the legend keys (size of colour squares)
+  )
+
+combined_plot_III
+
+ggsave("Combined_dens_prop_III.png", combined_plot, width = 9, height = 7, dpi = 300)        #saving the ggplot in high resolution
+```
+
+Calanus IV
+```{r}
+pred_vertical <- expand.grid(                       #making a new data frame to predict on 
+  perc_depth        = seq(2.5, 42.5, by = 5) / 45,  #midpoints of every bin at every 5m, divided by station depth
+  max_depth = 45,                                   #setting max_depth as a fixed 45m depth
+  Month           = 1:5                             #months going from January to May
+) |>
+  mutate(
+    actual_depth = perc_depth * max_depth,                              #converts back to metres
+    Temp        = mean(df_vertical$Temp,      na.rm = TRUE),            #holding temperature at its mean 
+    Salinity   = mean(df_vertical$Salinity, na.rm = TRUE),              #holding salinity at its mean
+    Light          = mean(df_vertical$Light,        na.rm = TRUE),      #holding Light at its mean
+    time_of_day=mean(df_vertical$time_of_day, na.rm = T)                #holding time of day at its mean
+    #Year       = mean(as.numeric(df_vertical$Year), na.rm = TRUE)
+  )
+
+
+pred_vertical$prop_cum_pred <- predict(WC_position_gam_IV, newdata = pred_vertical, type = "response") #Predicting cumulative proportion at midpoint of each bin 
+
+#Converting cumulative proportion to per-bin proportion 
+pred_vertical <- pred_vertical |>
+  arrange(Month, actual_depth) |>                                #arranging data by month and depth
+  group_by(Month) |>                                             #grouping by month 
+  mutate(
+    prop_cum_mono=cummax(prop_cum_pred),                        #create a cumulative proportion column
+    prop_bin = c(prop_cum_mono[1], diff(prop_cum_mono)) * 100   #finding proportion per bin
+  ) |>
+  ungroup() |>                                                 #ungrouping 
+  mutate(
+    Month_label = factor(Month, labels = c("January","February",
+                                              "March","April","May"))   #labeling months by thier names 
+  )
+
+depth_summary <- Ctd_Verticals_LJ |>                                 #creating a df with depth bin start and end along with calanus concentration 
+  mutate(depth_bin = floor(sample.depth..m. / 5) * 5) |>             #mutating the bins 
+  group_by(Month, depth_bin) |>                                      #grouping by month and depth bin 
+  summarise(calanus_conc = mean(calanus.IV.m3, na.rm = TRUE), .groups = "drop") |>  #taking calanus mean within each bin 
+  mutate(depth_bin_end = depth_bin + 5)                              #creating an upper edge for each bin
+
+prop_df <- pred_vertical |>                                     #creating new df called prop_df
+  transmute(Month = as.integer(Month),                          #Keeps only selected columns in the df; selecting month as an integer
+            depth_bin = floor(actual_depth / 5) * 5,            #creating a depth_bin column 
+            prop_bin)                                           #saving prop_bin
+
+dens_df <- depth_summary |>                                    #creating a dens_df df
+  transmute(Month = as.integer(as.character(Month)),           #keeps only selected columns in the df; selecting month as an integer
+            depth_bin,                                         #saves depth_bin
+            calanus_conc)                                      #saves calanus_conc
+
+combined <- full_join(prop_df, dens_df, by = c("Month", "depth_bin")) |>       #creating a combined df of the above two df
+  mutate(Month_label = factor(Month, labels = c("January","February",          #labelling month by their names 
+                                                 "March","April","May")))
+
+
+scale_factor <- max(combined$calanus_conc, na.rm = TRUE) /     
+                max(combined$prop_bin,   na.rm = TRUE)  #calculating a scaling factor to have proportion and actual c. fin abundance on the same graph
+
+combined_long <- combined |>                                    #creating a new df in long format
+  mutate(calanus_scaled = calanus_conc / scale_factor) |>       #creating calanus_sclaed for observed calanus using the sclae_factor
+  pivot_longer(cols = c(prop_bin, calanus_scaled),              #changing to long format with prop_bin and calanus_sclaed in the same column
+               names_to = "metric", values_to = "value") |>
+  mutate(metric = factor(metric,
+                          levels = c("prop_bin", "calanus_scaled"),           #creating two levels for metric 
+                          labels = c("Predicted % prop. of abundance", "Observed C. finmarchicus density")))  #labelling the two levels
+
+
+combined_plot_IV=ggplot(combined_long, aes(x = depth_bin, y = value, fill = metric)) + #creating a ggplot object
+  geom_col(position = position_dodge(width = 4), width = 4, na.rm = TRUE) +  #Creating a bar chart 
+ # scale_fill_manual(values = c(expression("Predicted % prop. of abundance"    = "cadetblue3",
+                                #"Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")" = "blue4"),
+  #                              "Observed density" = expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")"="blue4"))
+   #                  name = NULL)) +
+  scale_fill_manual(
+  values = c("Predicted % prop. of abundance"    = "cadetblue3", "Observed C. finmarchicus density" = "blue4"), #setting colours for the two bars
+  labels = c(    #Setting label names for the bars 
+    expression("Predicted % prop. of abundance"),
+    expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")")
+  ),
+  name = NULL #removes axes labels 
+)+
+  scale_x_continuous(breaks = seq(0, 45, 10), name = "Depth (m)") +   #setting x-axis sequence 
+  scale_y_continuous(
+    name     = expression("Predicted % proportion of abundance"),   #setting y-axis label 
+    sec.axis = sec_axis(~ . * scale_factor,                                                             #creating the second y-axis 
+                         name = expression("Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")") #labelling the second y-axis
+  )) +
+  facet_wrap(~ Month_label, nrow = 1) +     #faceting by month for the five different months 
+  #labs(title = expression(italic("Calanus")~"vertical distribution — Cape Cod Bay")) +
+  theme_bw() +  #setting a theme
+  theme(
+    strip.text         = element_text(face = "bold", size = 16),                          #making month labels bold and increasing their size 
+    panel.spacing      = unit(0.3, "cm"),                                                 #setting spacing between the different month panels
+    axis.title.x       = element_text(face = "bold", size = 14),                          #making x-axis title bold and increasing the size
+    axis.text.x        = element_text(face = "bold", size = 11),                          #making x-axis ticks bold and increasing the size
+    axis.title.y.left  = element_text(color = "cadetblue3", face = "bold", size = 16),    #making left y-axis title bold, increasing size and                                                                                              setting colour 
+    axis.text.y.left   = element_text(color = "cadetblue3", face = "bold", size = 11),    #making left y-axis ticks bold, increasing size and                                                                                              setting colour
+    axis.title.y.right = element_text(color = "blue4", face = "bold", size = 16),         #making right y-axis title bold, increasing size and                                                                                             setting colour          
+    axis.text.y.right  = element_text(color = "blue4", face = "bold", size = 11),         #making right y-axis ticks bold, increasing size and                                                                                             setting colour
+    axis.ticks.length  = unit(0.2, "cm"),                                                 #increasing axis tick size
+    axis.ticks         = element_line(linewidth = 0.6),                                   #setting thickness of ticks                   
+    legend.position   = "bottom",                                                         #setting legend position to be at the bottom
+    legend.title       = element_text(size = 16, face = "bold"),                          #making legend bold and increasing text size
+    legend.text        = element_text(size = 14),                                         #making legend text larger
+    legend.key.size    = unit(1, "cm")                                                    #increasing the legend keys (size of colour squares)
+  )
+
+combined_plot_IV
+
+ggsave("Combined_dens_prop_IV.png", combined_plot, width = 9, height = 7, dpi = 300)        #saving the ggplot in high resolution
+```
+
+Calanus V
+```{r}
+pred_vertical <- expand.grid(                       #making a new data frame to predict on 
+  perc_depth        = seq(2.5, 42.5, by = 5) / 45,  #midpoints of every bin at every 5m, divided by station depth
+  max_depth = 45,                                   #setting max_depth as a fixed 45m depth
+  Month           = 1:5                             #months going from January to May
+) |>
+  mutate(
+    actual_depth = perc_depth * max_depth,                              #converts back to metres
+    Temp        = mean(df_vertical$Temp,      na.rm = TRUE),            #holding temperature at its mean 
+    Salinity   = mean(df_vertical$Salinity, na.rm = TRUE),              #holding salinity at its mean
+    Light          = mean(df_vertical$Light,        na.rm = TRUE),      #holding Light at its mean
+    time_of_day=mean(df_vertical$time_of_day, na.rm = T)                #holding time of day at its mean
+    #Year       = mean(as.numeric(df_vertical$Year), na.rm = TRUE)
+  )
+
+
+pred_vertical$prop_cum_pred <- predict(WC_position_gam_V, newdata = pred_vertical, type = "response") #Predicting cumulative proportion at midpoint of each bin 
+
+#Converting cumulative proportion to per-bin proportion 
+pred_vertical <- pred_vertical |>
+  arrange(Month, actual_depth) |>                                #arranging data by month and depth
+  group_by(Month) |>                                             #grouping by month 
+  mutate(
+    prop_cum_mono=cummax(prop_cum_pred),                        #create a cumulative proportion column
+    prop_bin = c(prop_cum_mono[1], diff(prop_cum_mono)) * 100   #finding proportion per bin
+  ) |>
+  ungroup() |>                                                 #ungrouping 
+  mutate(
+    Month_label = factor(Month, labels = c("January","February",
+                                              "March","April","May"))   #labeling months by thier names 
+  )
+
+depth_summary <- Ctd_Verticals_LJ |>                                 #creating a df with depth bin start and end along with calanus concentration 
+  mutate(depth_bin = floor(sample.depth..m. / 5) * 5) |>             #mutating the bins 
+  group_by(Month, depth_bin) |>                                      #grouping by month and depth bin 
+  summarise(calanus_conc = mean(calanus.V.m3, na.rm = TRUE), .groups = "drop") |>  #taking calanus mean within each bin 
+  mutate(depth_bin_end = depth_bin + 5)                              #creating an upper edge for each bin
+
+prop_df <- pred_vertical |>                                     #creating new df called prop_df
+  transmute(Month = as.integer(Month),                          #Keeps only selected columns in the df; selecting month as an integer
+            depth_bin = floor(actual_depth / 5) * 5,            #creating a depth_bin column 
+            prop_bin)                                           #saving prop_bin
+
+dens_df <- depth_summary |>                                    #creating a dens_df df
+  transmute(Month = as.integer(as.character(Month)),           #keeps only selected columns in the df; selecting month as an integer
+            depth_bin,                                         #saves depth_bin
+            calanus_conc)                                      #saves calanus_conc
+
+combined <- full_join(prop_df, dens_df, by = c("Month", "depth_bin")) |>       #creating a combined df of the above two df
+  mutate(Month_label = factor(Month, labels = c("January","February",          #labelling month by their names 
+                                                 "March","April","May")))
+
+
+scale_factor <- max(combined$calanus_conc, na.rm = TRUE) /     
+                max(combined$prop_bin,   na.rm = TRUE)  #calculating a scaling factor to have proportion and actual c. fin abundance on the same graph
+
+combined_long <- combined |>                                    #creating a new df in long format
+  mutate(calanus_scaled = calanus_conc / scale_factor) |>       #creating calanus_sclaed for observed calanus using the sclae_factor
+  pivot_longer(cols = c(prop_bin, calanus_scaled),              #changing to long format with prop_bin and calanus_sclaed in the same column
+               names_to = "metric", values_to = "value") |>
+  mutate(metric = factor(metric,
+                          levels = c("prop_bin", "calanus_scaled"),           #creating two levels for metric 
+                          labels = c("Predicted % prop. of abundance", "Observed C. finmarchicus density")))  #labelling the two levels
+
+
+combined_plot_V=ggplot(combined_long, aes(x = depth_bin, y = value, fill = metric)) + #creating a ggplot object
+  geom_col(position = position_dodge(width = 4), width = 4, na.rm = TRUE) +  #Creating a bar chart 
+ # scale_fill_manual(values = c(expression("Predicted % prop. of abundance"    = "cadetblue3",
+                                #"Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")" = "blue4"),
+  #                              "Observed density" = expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")"="blue4"))
+   #                  name = NULL)) +
+  scale_fill_manual(
+  values = c("Predicted % prop. of abundance"    = "cadetblue3", "Observed C. finmarchicus density" = "blue4"), #setting colours for the two bars
+  labels = c(    #Setting label names for the bars 
+    expression("Predicted % prop. of abundance"),
+    expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")")
+  ),
+  name = NULL #removes axes labels 
+)+
+  scale_x_continuous(breaks = seq(0, 45, 10), name = "Depth (m)") +   #setting x-axis sequence 
+  scale_y_continuous(
+    name     = expression("Predicted % proportion of abundance"),   #setting y-axis label 
+    sec.axis = sec_axis(~ . * scale_factor,                                                             #creating the second y-axis 
+                         name = expression("Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")") #labelling the second y-axis
+  )) +
+  facet_wrap(~ Month_label, nrow = 1) +     #faceting by month for the five different months 
+  #labs(title = expression(italic("Calanus")~"vertical distribution — Cape Cod Bay")) +
+  theme_bw() +  #setting a theme
+  theme(
+    strip.text         = element_text(face = "bold", size = 16),                          #making month labels bold and increasing their size 
+    panel.spacing      = unit(0.3, "cm"),                                                 #setting spacing between the different month panels
+    axis.title.x       = element_text(face = "bold", size = 14),                          #making x-axis title bold and increasing the size
+    axis.text.x        = element_text(face = "bold", size = 11),                          #making x-axis ticks bold and increasing the size
+    axis.title.y.left  = element_text(color = "cadetblue3", face = "bold", size = 16),    #making left y-axis title bold, increasing size and                                                                                              setting colour 
+    axis.text.y.left   = element_text(color = "cadetblue3", face = "bold", size = 11),    #making left y-axis ticks bold, increasing size and                                                                                              setting colour
+    axis.title.y.right = element_text(color = "blue4", face = "bold", size = 16),         #making right y-axis title bold, increasing size and                                                                                             setting colour          
+    axis.text.y.right  = element_text(color = "blue4", face = "bold", size = 11),         #making right y-axis ticks bold, increasing size and                                                                                             setting colour
+    axis.ticks.length  = unit(0.2, "cm"),                                                 #increasing axis tick size
+    axis.ticks         = element_line(linewidth = 0.6),                                   #setting thickness of ticks                   
+    legend.position   = "bottom",                                                         #setting legend position to be at the bottom
+    legend.title       = element_text(size = 16, face = "bold"),                          #making legend bold and increasing text size
+    legend.text        = element_text(size = 14),                                         #making legend text larger
+    legend.key.size    = unit(1, "cm")                                                    #increasing the legend keys (size of colour squares)
+  )
+
+combined_plot_V
+
+ggsave("Combined_dens_prop_V.png", combined_plot, width = 9, height = 7, dpi = 300)        #saving the ggplot in high resolution
+```
+
+Calanus Adult
+```{r}
+pred_vertical <- expand.grid(                       #making a new data frame to predict on 
+  perc_depth        = seq(2.5, 42.5, by = 5) / 45,  #midpoints of every bin at every 5m, divided by station depth
+  max_depth = 45,                                   #setting max_depth as a fixed 45m depth
+  Month           = 1:5                             #months going from January to May
+) |>
+  mutate(
+    actual_depth = perc_depth * max_depth,                              #converts back to metres
+    Temp        = mean(df_vertical$Temp,      na.rm = TRUE),            #holding temperature at its mean 
+    Salinity   = mean(df_vertical$Salinity, na.rm = TRUE),              #holding salinity at its mean
+    Light          = mean(df_vertical$Light,        na.rm = TRUE),      #holding Light at its mean
+    time_of_day=mean(df_vertical$time_of_day, na.rm = T)                #holding time of day at its mean
+    #Year       = mean(as.numeric(df_vertical$Year), na.rm = TRUE)
+  )
+
+
+pred_vertical$prop_cum_pred <- predict(WC_position_gam_Adult, newdata = pred_vertical, type = "response") #Predicting cumulative proportion at midpoint of each bin 
+
+#Converting cumulative proportion to per-bin proportion 
+pred_vertical <- pred_vertical |>
+  arrange(Month, actual_depth) |>                                #arranging data by month and depth
+  group_by(Month) |>                                             #grouping by month 
+  mutate(
+    prop_cum_mono=cummax(prop_cum_pred),                        #create a cumulative proportion column
+    prop_bin = c(prop_cum_mono[1], diff(prop_cum_mono)) * 100   #finding proportion per bin
+  ) |>
+  ungroup() |>                                                 #ungrouping 
+  mutate(
+    Month_label = factor(Month, labels = c("January","February",
+                                              "March","April","May"))   #labeling months by thier names 
+  )
+
+depth_summary <- Ctd_Verticals_LJ |>                                 #creating a df with depth bin start and end along with calanus concentration 
+  mutate(depth_bin = floor(sample.depth..m. / 5) * 5) |>             #mutating the bins 
+  group_by(Month, depth_bin) |>                                      #grouping by month and depth bin 
+  summarise(calanus_conc = mean(calanus.Adult.m3, na.rm = TRUE), .groups = "drop") |>  #taking calanus mean within each bin 
+  mutate(depth_bin_end = depth_bin + 5)                              #creating an upper edge for each bin
+
+prop_df <- pred_vertical |>                                     #creating new df called prop_df
+  transmute(Month = as.integer(Month),                          #Keeps only selected columns in the df; selecting month as an integer
+            depth_bin = floor(actual_depth / 5) * 5,            #creating a depth_bin column 
+            prop_bin)                                           #saving prop_bin
+
+dens_df <- depth_summary |>                                    #creating a dens_df df
+  transmute(Month = as.integer(as.character(Month)),           #keeps only selected columns in the df; selecting month as an integer
+            depth_bin,                                         #saves depth_bin
+            calanus_conc)                                      #saves calanus_conc
+
+combined <- full_join(prop_df, dens_df, by = c("Month", "depth_bin")) |>       #creating a combined df of the above two df
+  mutate(Month_label = factor(Month, labels = c("January","February",          #labelling month by their names 
+                                                 "March","April","May")))
+
+
+scale_factor <- max(combined$calanus_conc, na.rm = TRUE) /     
+                max(combined$prop_bin,   na.rm = TRUE)  #calculating a scaling factor to have proportion and actual c. fin abundance on the same graph
+
+combined_long <- combined |>                                    #creating a new df in long format
+  mutate(calanus_scaled = calanus_conc / scale_factor) |>       #creating calanus_sclaed for observed calanus using the sclae_factor
+  pivot_longer(cols = c(prop_bin, calanus_scaled),              #changing to long format with prop_bin and calanus_sclaed in the same column
+               names_to = "metric", values_to = "value") |>
+  mutate(metric = factor(metric,
+                          levels = c("prop_bin", "calanus_scaled"),           #creating two levels for metric 
+                          labels = c("Predicted % prop. of abundance", "Observed C. finmarchicus density")))  #labelling the two levels
+
+
+combined_plot_Adult=ggplot(combined_long, aes(x = depth_bin, y = value, fill = metric)) + #creating a ggplot object
+  geom_col(position = position_dodge(width = 4), width = 4, na.rm = TRUE) +  #Creating a bar chart 
+ # scale_fill_manual(values = c(expression("Predicted % prop. of abundance"    = "cadetblue3",
+                                #"Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")" = "blue4"),
+  #                              "Observed density" = expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")"="blue4"))
+   #                  name = NULL)) +
+  scale_fill_manual(
+  values = c("Predicted % prop. of abundance"    = "cadetblue3", "Observed C. finmarchicus density" = "blue4"), #setting colours for the two bars
+  labels = c(    #Setting label names for the bars 
+    expression("Predicted % prop. of abundance"),
+    expression("Observed "*italic("C. finmarchicus")*" density (ind "*m^-3*")")
+  ),
+  name = NULL #removes axes labels 
+)+
+  scale_x_continuous(breaks = seq(0, 45, 10), name = "Depth (m)") +   #setting x-axis sequence 
+  scale_y_continuous(
+    name     = expression("Predicted % proportion of abundance"),   #setting y-axis label 
+    sec.axis = sec_axis(~ . * scale_factor,                                                             #creating the second y-axis 
+                         name = expression("Observed"~italic("C. finmarchicus")~"density (ind "*m^-3*")") #labelling the second y-axis
+  )) +
+  facet_wrap(~ Month_label, nrow = 1) +     #faceting by month for the five different months 
+  #labs(title = expression(italic("Calanus")~"vertical distribution — Cape Cod Bay")) +
+  theme_bw() +  #setting a theme
+  theme(
+    strip.text         = element_text(face = "bold", size = 16),                          #making month labels bold and increasing their size 
+    panel.spacing      = unit(0.3, "cm"),                                                 #setting spacing between the different month panels
+    axis.title.x       = element_text(face = "bold", size = 14),                          #making x-axis title bold and increasing the size
+    axis.text.x        = element_text(face = "bold", size = 11),                          #making x-axis ticks bold and increasing the size
+    axis.title.y.left  = element_text(color = "cadetblue3", face = "bold", size = 16),    #making left y-axis title bold, increasing size and                                                                                              setting colour 
+    axis.text.y.left   = element_text(color = "cadetblue3", face = "bold", size = 11),    #making left y-axis ticks bold, increasing size and                                                                                              setting colour
+    axis.title.y.right = element_text(color = "blue4", face = "bold", size = 16),         #making right y-axis title bold, increasing size and                                                                                             setting colour          
+    axis.text.y.right  = element_text(color = "blue4", face = "bold", size = 11),         #making right y-axis ticks bold, increasing size and                                                                                             setting colour
+    axis.ticks.length  = unit(0.2, "cm"),                                                 #increasing axis tick size
+    axis.ticks         = element_line(linewidth = 0.6),                                   #setting thickness of ticks                   
+    legend.position   = "bottom",                                                         #setting legend position to be at the bottom
+    legend.title       = element_text(size = 16, face = "bold"),                          #making legend bold and increasing text size
+    legend.text        = element_text(size = 14),                                         #making legend text larger
+    legend.key.size    = unit(1, "cm")                                                    #increasing the legend keys (size of colour squares)
+  )
+
+combined_plot_Adult
+
+ggsave("Combined_dens_prop_Adult.png", combined_plot, width = 9, height = 7, dpi = 300)        #saving the ggplot in high resolution
+```
