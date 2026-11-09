@@ -1,0 +1,199 @@
+---
+title: "Spatial_GAM"
+author: "Shreya Vinodh"
+date: "2026-11-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+base_dir="C:/Shreya/NARW Thesis/Data/"
+```
+
+```{r}
+Cal_gam <- gam(                 #Starting a spatial model
+  ED_max_calories_m3 ~          #Setting ED max as the response 
+    s(max_depth) +              #maximum depth
+    Month+                      #month as a factor
+    s(long, lat, by=Month),     #a lat long smooth with month as a factor 
+  family = tw(),                #modelling with a tweedie family distribution 
+  method = "REML",              #Using REML 
+  select = TRUE,                #Applying shrinkage
+  data   = depth_of_Calmax      #calling the relevant df 
+)
+
+summary(Cal_gam)               #summarising the GAM
+plot(Cal_gam)                  #Plotting the GAMs
+gam.check(Cal_gam)             #Plotting GAM check plots 
+```
+
+```{r}
+LatLongStations=depth_of_Calmax%>%select(lat, long)          #creating a latlong df 
+write.csv(LatLongStations, "C:/Shreya/NARW Thesis/Data/LatLongStationsCal.csv")   #saving it as a csv 
+```
+
+```{r}
+#creating a prediction hull based on my sampling stations so I am only interpolating
+station_hull <- LatLongStations |>                       #working with LatLongStations df 
+  st_as_sf(coords = c("long", "lat"), crs = 4326) |>     #Converts lat and long into sf spatial objects using WGS84
+  st_union() |>                                          #combining stations points into one workable object 
+  st_convex_hull()                                       #drawing a hull around my stations
+
+land <- ne_states(country = "united states of america", returnclass = "sf")     #calls the US states as a spatial sf object 
+land <- st_crop(land, xmin = -70.65, xmax = -70.00, ymin = 41.65, ymax = 42.10)   #specifying the area of land I need for this study
+
+df_ocean_sub <- df_ocean |>                      #creating a new subset of df_ocean
+  filter(
+    lon >= -70.55,
+    lon <= -70.10,
+    lat >= 41.749,
+    lat <= 42.060
+  )                                              #filtering only relevant lat and longs based on stations
+
+model_month_levels <- levels(Cal_gam$model$Month)              #getting the month levels 
+depth_range <- range(depth_of_Calmax$max_depth, na.rm = TRUE)  #getting the depth range to only predict within sampled depth
+
+all_pred <- df_ocean_sub |>                               #preparing prediction grid 
+  rename(long = lon) |>                                   #renaming lon as long to match df
+  select(long, lat, depth_m) |>                           #Selecting only relevant columns
+  rename(max_depth = depth_m) |>                          #renaming depth_m to max_depth to match df
+  tidyr::crossing(Month = factor(model_month_levels, levels = model_month_levels))   #creating prediction locations for all 5 months
+
+all_pred$ED_max_calories_m3 <- predict(Cal_gam, newdata = all_pred, type = "response")      #predicting ED_max for every month on the response scale 
+
+all_pred <- all_pred |>                                                              
+  mutate(
+    ED_max_calories_m3 = ifelse(max_depth < depth_range[1] | max_depth > depth_range[2], NA, ED_max_calories_m3)
+  )           #masking any predictions outside the depth range 
+
+
+all_pred_sf <- st_as_sf(all_pred, coords = c("long", "lat"), crs = 4326, remove = FALSE)  #Converting prediction locations into spatial sf points 
+all_pred_sf$in_hull  <- lengths(st_intersects(all_pred_sf, station_hull)) > 0     #determining which predictions are inside the hull
+all_pred_sf$on_land  <- lengths(st_intersects(all_pred_sf, land)) > 0       #determing which predictions are on land
+
+all_pred <- all_pred_sf |>
+  st_drop_geometry() |>
+  mutate(ED_max_calories_m3 = ifelse(!in_hull | on_land, NA, ED_max_calories_m3))      #dropping any predictions that are on land or outside the convex hull
+
+fill_limits <- range(all_pred$ED_max_calories_m3, na.rm = TRUE)   #finds the min and max predicted ED for colour scale
+
+
+make_suitability_map <- function(selected_month) {       #creating a function to make ED map per month
+  new_data_suitability_tweedie <- df_ocean_sub |>        #creating prediction for each month
+    rename(long = lon) |>
+    mutate(Month = factor(selected_month, levels = model_month_levels),
+           max_depth = df_ocean_sub$depth_m)
+
+  pred_suitability <- predict(Cal_gam, newdata = new_data_suitability_tweedie,   #predicting ED for every month
+                               type = "response", se.fit = TRUE)   #with the response and residuals 
+  new_data_suitability_tweedie$ED_max_calories_m3 <- pred_suitability$fit    #storing the fit of the prediction as ED_max in my df
+
+#masking within the depth range and making everything out of depth range NA
+  new_data_suitability_tweedie <- new_data_suitability_tweedie |>  
+    mutate(
+      ED_max_calories_m3 = ifelse(
+        max_depth < depth_range[1] | max_depth > depth_range[2],
+        NA, ED_max_calories_m3
+      )
+    )
+
+  pred_sf <- st_as_sf(new_data_suitability_tweedie, coords = c("long", "lat"),
+                      crs = 4326, remove = FALSE)                               #converting prediction points into sf spatial object
+  pred_sf$in_hull <- lengths(st_intersects(pred_sf, station_hull)) > 0    #identifying points inside hull
+  pred_sf$on_land <- lengths(st_intersects(pred_sf, land)) > 0            #identifying points on land
+
+  new_data_suitability_tweedie <- pred_sf |> 
+    st_drop_geometry() |>
+    mutate(ED_max_calories_m3 = ifelse(!in_hull | on_land, NA, ED_max_calories_m3))   #keeping only points within hull and within depth range
+  
+
+pred_points <- new_data_suitability_tweedie |>
+  st_as_sf(coords = c("long", "lat"), crs = 4326, remove = FALSE)   #creating an sf object of predictions
+
+#Whale sightings as sf spatial object points for each month 
+RW_Sightings_month <- RW_Sightings |>
+  mutate(sighting_month = as.numeric(format(as.Date(date, format = "%d-%b-%y"), "%m"))) |>    #extracting month from the date
+  filter(sighting_month == selected_month) |>      #filtering only sightings from the selected month
+  rename(long = Longitude, lat = Latitude) |>      #renaming lat and long to df names
+  filter(!is.na(long), !is.na(lat)) |>             #removing any NA's in long and late
+  mutate(category = "NARW sighting") |>            #adding a column for NARW sightings
+  st_as_sf(coords = c("long", "lat"), crs = 4326, remove = FALSE)   #converts whale sightings into spatial sf points
+
+idx <- st_nearest_feature(RW_Sightings_month, pred_points)   #finding the nearest prediction point for every NARW sighting
+
+#removing any sightings outside prediction area
+RW_Sightings_month <- RW_Sightings_month[
+  !is.na(pred_points$ED_max_calories_m3[idx]),    
+] |>
+  st_drop_geometry()
+  
+  ggplot() +    #starting a ggplot
+    geom_raster(data = new_data_suitability_tweedie,
+                aes(x = long, y = lat, fill = ED_max_calories_m3),
+                interpolate = TRUE, na.rm = TRUE) +            #creates the ED max map 
+    geom_sf(data = land, fill = "grey70", color = "black", inherit.aes = FALSE) +   #plots land mass onto the map
+    geom_point(data = RW_Sightings_month, 
+               aes(x = long, y = lat, shape = category, color = category),
+               size = 0.4, show.legend = FALSE) +                               #plots NARW sightings of every month
+    coord_sf(xlim = c(-70.65, -70.00), ylim = c(41.65, 42.10), expand = FALSE) +  #forces geographic extent of map
+    scale_x_continuous(breaks = c(-70.6, -70.4, -70.2, -70.0)) +     #setting x-axis sclae 
+    scale_y_continuous(breaks = c(41.7, 41.9, 42.1))+      #setting y-axis scale 
+    scale_fill_viridis_c(option = "turbo", limits = fill_limits, na.value = NA, name = "Calories Max") +   #makes a colour scale for ED max
+    scale_color_manual(name = "Legend", values = c("NARW sighting" = "violetred3")) +   #setting colour of NARW sightings manually
+    annotation_scale(location = "bl") +     #scale bar on bottom left 
+    annotation_north_arrow(location = "bl", style = north_arrow_fancy_orienteering(), height = unit(0.9, "cm"), width = unit(0.9,                            "cm"), pad_x = unit(0.05, "cm"), pad_y = unit(0.7,"cm")) +    #setting north arrow
+    labs(subtitle = month.name[selected_month], x = NULL, y = NULL) +   #creating a month title above each map
+    theme_minimal()+      #creating a theme
+    theme(
+      plot.subtitle = element_text(    #formatting month labels to be bigger and bold and centred 
+      size = 14,
+      face = "bold",
+     hjust = 0.5
+  ))}
+
+#calling the function for each month 
+p_jan <- make_suitability_map(1)  
+p_feb <- make_suitability_map(2)
+p_mar <- make_suitability_map(3)
+p_apr <- make_suitability_map(4)
+p_may <- make_suitability_map(5)
+
+#getting the legend from one map
+legend_ED <- get_legend(
+  p_jan + theme(legend.position = "right")
+)
+
+#turns the legend into a plot
+legend_plot_ED <- cowplot::ggdraw(legend_ED)
+
+#Remove the legend from all maps
+p_jan_noleg <- p_jan + theme(legend.position = "none")
+p_feb_noleg <- p_feb + theme(legend.position = "none")
+p_mar_noleg <- p_mar + theme(legend.position = "none")
+p_apr_noleg <- p_apr + theme(legend.position = "none")
+p_may_noleg <- p_may + theme(legend.position = "none")
+
+#combine all maps with legend plot 
+combined_fig <-
+  (p_jan_noleg + p_feb_noleg + p_mar_noleg) /
+  (p_apr_noleg + p_may_noleg + legend_plot_ED)
+
+combined_fig   #call on the figure to view 
+
+#save the whole plot on an A4 size png 
+ggsave(
+  filename = "combined_fig_ED.png",
+  plot = combined_fig,
+  width = 11.69,
+  height = 8.27,
+  units = "in",
+  dpi = 600,
+  bg = "white"
+)
+```
+
+
+
+
+
+

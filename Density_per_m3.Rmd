@@ -15,6 +15,10 @@ base_dir="C:/Shreya/NARW Thesis/Data/"
 library(dplyr)
 library(purrr)
 
+station_data <- Integrated_new |>                #Creating a station_data df with only the below columns selected 
+  select(ID, Date, Year, Month, max_depth, temp_mean, salinity_mean, Light_mean, calanus_wc_I, calanus_wc_II, calanus_wc_III, calanus_wc_IV, calanus_wc_V, calanus_wc_Adult, lat, long) |>
+  distinct() 
+
 #Building the bins
 station_bins <- station_data |>
   rowwise() |>
@@ -62,4 +66,51 @@ predict_stage <- function(stage, model, bins) {
 
 #Run for all stages 
 station_bins_all <- imap_dfr(models, \(m, stage) predict_stage(stage, m, station_bins))
+
+sum(is.na(station_bins_all$prop_cum_pred))
 ```
+
+```{r}
+cal_per_ind <- c(I = 0.0074, II = 0.0428, III = 0.1494,
+                 IV = 0.5999, V = 1.8601, Adult = 1.8626)
+
+station_bins_all <- station_bins_all |>
+  mutate(
+    calories_per_individual = cal_per_ind[stage],
+    ED_max_calories_m3      = density_m3 * calories_per_individual
+  )
+
+station_bins_all <- station_bins_all |>
+  group_by(ID, Date, actual_depth) |>
+  mutate(
+    ED_total_calories_m3 = sum(ED_max_calories_m3, na.rm = TRUE),
+    density_m3_total     = sum(density_m3, na.rm = TRUE)
+  ) |>
+  ungroup()
+```
+
+```{r}
+station_bins_total <- station_bins_all |>
+  group_by(ID, Date, actual_depth) |>
+  summarise(
+    ED_max_calories_m3 = sum(ED_max_calories_m3, na.rm = TRUE),
+    density_m3_total   = sum(density_m3, na.rm = TRUE),
+    across(c(Year, Month, max_depth, perc_depth, Temp, Salinity, Light, lat, long),
+           first),
+    .groups = "drop"
+  )
+```
+
+#Getting row with highest calorie 
+```{r}
+depth_of_EDmax <- station_bins_all |>                             #finding out which bin level has the highest energy level and putting it in depth_of_EDmax df
+  group_by(ID, Date) |>                                       #grouping to work within each ID and Date
+  slice_max(ED_max_calories_m3, n = 1, with_ties = FALSE) |>        #getting only the row with the maximum energy 
+  select(ID, Date, lat, long, Year, depth_of_max = actual_depth, ED_max_calories_m3, Month, max_depth) |>    
+  ungroup()
+```
+
+
+
+
+
