@@ -103,7 +103,7 @@ station_bins_total <- station_bins_all |>
 
 #Getting row with highest calorie 
 ```{r}
-depth_of_EDmax <- station_bins_all |>                             #finding out which bin level has the highest energy level and putting it in depth_of_EDmax df
+depth_of_Calmax <- station_bins_all |>                             #finding out which bin level has the highest energy level and putting it in depth_of_EDmax df
   group_by(ID, Date) |>                                       #grouping to work within each ID and Date
   slice_max(ED_max_calories_m3, n = 1, with_ties = FALSE) |>        #getting only the row with the maximum energy 
   select(ID, Date, lat, long, Year, depth_of_max = actual_depth, ED_max_calories_m3, Month, max_depth) |>    
